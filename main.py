@@ -30,7 +30,16 @@ def hash_password(password: str, salt: str) -> str:
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 
+def ensure_db_available(allow_readonly_fallback: bool = False):
+    if db is None:
+        if allow_readonly_fallback:
+            return False
+        raise HTTPException(status_code=503, detail="Database not configured")
+    return True
+
+
 def require_admin(x_auth_token: Optional[str] = Header(None)):
+    ensure_db_available()
     if not x_auth_token:
         raise HTTPException(status_code=401, detail="Auth token missing")
     user = db["user"].find_one({"api_token": x_auth_token})
@@ -42,6 +51,8 @@ def require_admin(x_auth_token: Optional[str] = Header(None)):
 
 
 def optional_user(x_auth_token: Optional[str] = Header(None)):
+    if db is None:
+        return None
     if not x_auth_token:
         return None
     return db["user"].find_one({"api_token": x_auth_token})
@@ -164,6 +175,7 @@ class AuthResponse(BaseModel):
 
 @app.post("/auth/register", response_model=AuthResponse)
 def register(req: RegisterRequest):
+    ensure_db_available()
     # Normalize inputs
     name_raw = (req.name or "").strip()
     email_norm = (req.email or "").strip().lower()
@@ -203,6 +215,7 @@ class LoginRequest(BaseModel):
 
 @app.post("/auth/login", response_model=AuthResponse)
 def login(req: LoginRequest):
+    ensure_db_available()
     email_norm = (req.email or "").strip().lower()
     user = db["user"].find_one({"email": email_norm})
     if not user:
@@ -260,6 +273,9 @@ def map_game(doc) -> 'GamePublic':
 
 @app.get("/games", response_model=List['GamePublic'])
 def list_games(platform: Optional[str] = None, q: Optional[str] = None, category: Optional[str] = None, featured: Optional[bool] = None):
+    # If DB not configured, return empty list instead of 500
+    if not ensure_db_available(allow_readonly_fallback=True):
+        return []
     filt = {}
     if platform:
         filt["platform"] = platform
@@ -275,6 +291,7 @@ def list_games(platform: Optional[str] = None, q: Optional[str] = None, category
 
 @app.get("/games/{game_id}", response_model='GamePublic')
 def get_game(game_id: str):
+    ensure_db_available()
     try:
         doc = db["game"].find_one({"_id": ObjectId(game_id)})
     except Exception:
@@ -314,12 +331,15 @@ def map_review(doc) -> 'ReviewPublic':
 
 @app.get("/games/{game_id}/reviews", response_model=List['ReviewPublic'])
 def list_reviews(game_id: str):
+    if not ensure_db_available(allow_readonly_fallback=True):
+        return []
     docs = db["review"].find({"game_id": game_id}).sort("created_at", -1)
     return [map_review(d) for d in docs]
 
 
 @app.post("/games/{game_id}/reviews", response_model='ReviewPublic')
 def create_review(game_id: str, req: ReviewCreateRequest):
+    ensure_db_available()
     # check game exists
     try:
         exists = db["game"].find_one({"_id": ObjectId(game_id)})
@@ -424,6 +444,8 @@ class CouponValidateResult(BaseModel):
 
 @app.post("/coupons/validate", response_model=CouponValidateResult)
 def validate_coupon(req: CouponValidateRequest):
+    if not ensure_db_available(allow_readonly_fallback=True):
+        return {"valid": False, "discount_percent": 0.0, "reason": "DB not configured"}
     code = (req.code or "").upper().strip()
     if not code:
         return {"valid": False, "discount_percent": 0.0, "reason": "No code"}
@@ -482,6 +504,7 @@ def map_order(doc) -> 'OrderPublic':
 
 @app.post("/orders", response_model='OrderPublic')
 def create_order(req: OrderCreateRequest):
+    ensure_db_available()
     # validate game exists
     try:
         game = db["game"].find_one({"_id": ObjectId(req.game_id)})
