@@ -26,6 +26,8 @@ class Game(BaseModel):
     category: Optional[str] = Field(None, description="Action, RPG, etc.")
     images: List[str] = Field(default_factory=list, description="Image URLs")
     in_stock: bool = Field(True, description="Available for sale")
+    stock_count: int = Field(0, ge=0, description="Available quantity (0 = out of stock)")
+    featured: bool = Field(False, description="Show in featured slider")
 
 
 class Order(BaseModel):
@@ -35,3 +37,19 @@ class Order(BaseModel):
     transaction_id: str = Field(..., description="Nagad transaction ID (TRX)")
     status: str = Field("pending", description="pending | processing | completed | cancelled")
     note: Optional[str] = Field(None, description="Optional note by buyer/admin")
+    coupon_code: Optional[str] = Field(None, description="Applied coupon code if any")
+    total_price: Optional[float] = Field(None, description="Final price after discount")
+
+
+class Coupon(BaseModel):
+    code: str = Field(..., description="Unique coupon code")
+    discount_percent: float = Field(..., ge=0, le=100, description="Discount percentage 0-100")
+    active: bool = Field(True, description="Is coupon active")
+    expires_at: Optional[str] = Field(None, description="ISO datetime string; if set and past => invalid")
+
+
+class Review(BaseModel):
+    game_id: str = Field(..., description="Game ObjectId as string")
+    author: Optional[str] = Field(None, description="Reviewer name/email (optional)")
+    rating: int = Field(..., ge=1, le=5, description="1-5 star rating")
+    comment: Optional[str] = Field(None, description="Review text")
