@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,7 +74,7 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
 @app.on_event("startup")
 def seed_admin_user():
     try:
-        admin_email = os.getenv("ADMIN_EMAIL", "replikaai512@gmail.com").strip().lower()
+        admin_email = (os.getenv("ADMIN_EMAIL", "replikaai512@gmail.com") or "").strip().lower()
         admin_password = os.getenv("ADMIN_PASSWORD", "RsGhor#2025")
         # Ensure DB is available
         if db is None:
@@ -163,15 +164,27 @@ class AuthResponse(BaseModel):
 
 @app.post("/auth/register", response_model=AuthResponse)
 def register(req: RegisterRequest):
-    existing = db["user"].find_one({"email": req.email})
-    if existing:
+    # Normalize inputs
+    name_raw = (req.name or "").strip()
+    email_norm = (req.email or "").strip().lower()
+
+    # Disallow duplicate email (case-insensitive) or name (case-insensitive)
+    by_email = db["user"].find_one({"email": email_norm})
+    if by_email:
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    name_regex = {"$regex": f"^{re.escape(name_raw)}$", "$options": "i"}
+    by_name = db["user"].find_one({"name": name_regex})
+    if by_name:
+        raise HTTPException(status_code=400, detail="Name already taken")
+
     salt = secrets.token_hex(16)
     password_hash = hash_password(req.password, salt)
     role = "admin" if (req.admin_code and req.admin_code == os.getenv("ADMIN_CODE", "admin123")) else "user"
+
     user_doc = UserSchema(
-        name=req.name,
-        email=req.email,
+        name=name_raw,
+        email=email_norm,
         password_hash=password_hash,
         salt=salt,
         role=role,
@@ -180,7 +193,7 @@ def register(req: RegisterRequest):
     user_id = create_document("user", user_doc)
     token = secrets.token_hex(24)
     db["user"].update_one({"_id": ObjectId(user_id)}, {"$set": {"api_token": token}})
-    return {"token": token, "role": role, "name": req.name, "email": req.email}
+    return {"token": token, "role": role, "name": name_raw, "email": email_norm}
 
 
 class LoginRequest(BaseModel):
@@ -190,7 +203,8 @@ class LoginRequest(BaseModel):
 
 @app.post("/auth/login", response_model=AuthResponse)
 def login(req: LoginRequest):
-    user = db["user"].find_one({"email": req.email})
+    email_norm = (req.email or "").strip().lower()
+    user = db["user"].find_one({"email": email_norm})
     if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
     hashed = hash_password(req.password, user.get("salt", ""))
@@ -489,7 +503,7 @@ def create_order(req: OrderCreateRequest):
 
     order_doc = OrderSchema(
         game_id=req.game_id,
-        buyer_email=req.buyer_email,
+        buyer_email=req.buyer_email.strip().lower(),
         nagad_number=req.nagad_number,
         transaction_id=req.transaction_id,
         status="pending",
