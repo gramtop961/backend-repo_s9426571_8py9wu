@@ -68,6 +68,47 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
+# ------------ Startup: Seed Admin ------------ #
+
+@app.on_event("startup")
+def seed_admin_user():
+    try:
+        admin_email = os.getenv("ADMIN_EMAIL", "replikaai512@gmail.com").strip().lower()
+        admin_password = os.getenv("ADMIN_PASSWORD", "RsGhor#2025")
+        # Ensure DB is available
+        if db is None:
+            return
+        existing = db["user"].find_one({"email": admin_email})
+        salt = secrets.token_hex(16)
+        password_hash = hash_password(admin_password, salt)
+        if not existing:
+            user_doc = UserSchema(
+                name="RS Game Ghor Admin",
+                email=admin_email,
+                password_hash=password_hash,
+                salt=salt,
+                role="admin",
+                is_active=True,
+            )
+            user_id = create_document("user", user_doc)
+            token = secrets.token_hex(24)
+            db["user"].update_one({"_id": ObjectId(user_id)}, {"$set": {"api_token": token}})
+        else:
+            # Ensure role admin and password matches the configured one
+            updates = {
+                "role": "admin",
+                "is_active": True,
+                "password_hash": password_hash,
+                "salt": salt,
+            }
+            if not existing.get("api_token"):
+                updates["api_token"] = secrets.token_hex(24)
+            db["user"].update_one({"_id": existing["_id"]}, {"$set": updates})
+    except Exception:
+        # Best-effort seeding; don't crash app on failure
+        pass
+
+
 # ------------ Root & Health ------------ #
 
 @app.get("/")
@@ -188,7 +229,7 @@ class GamePublic(BaseModel):
     featured: bool
 
 
-def map_game(doc) -> GamePublic:
+def map_game(doc) -> 'GamePublic':
     return GamePublic(
         id=str(doc["_id"]),
         title=doc.get("title"),
@@ -203,7 +244,7 @@ def map_game(doc) -> GamePublic:
     )
 
 
-@app.get("/games", response_model=List[GamePublic])
+@app.get("/games", response_model=List['GamePublic'])
 def list_games(platform: Optional[str] = None, q: Optional[str] = None, category: Optional[str] = None, featured: Optional[bool] = None):
     filt = {}
     if platform:
@@ -218,7 +259,7 @@ def list_games(platform: Optional[str] = None, q: Optional[str] = None, category
     return [map_game(d) for d in docs]
 
 
-@app.get("/games/{game_id}", response_model=GamePublic)
+@app.get("/games/{game_id}", response_model='GamePublic')
 def get_game(game_id: str):
     try:
         doc = db["game"].find_one({"_id": ObjectId(game_id)})
@@ -246,7 +287,7 @@ class ReviewPublic(BaseModel):
     created_at: Optional[str] = None
 
 
-def map_review(doc) -> ReviewPublic:
+def map_review(doc) -> 'ReviewPublic':
     return ReviewPublic(
         id=str(doc["_id"]),
         game_id=str(doc.get("game_id")),
@@ -257,13 +298,13 @@ def map_review(doc) -> ReviewPublic:
     )
 
 
-@app.get("/games/{game_id}/reviews", response_model=List[ReviewPublic])
+@app.get("/games/{game_id}/reviews", response_model=List['ReviewPublic'])
 def list_reviews(game_id: str):
     docs = db["review"].find({"game_id": game_id}).sort("created_at", -1)
     return [map_review(d) for d in docs]
 
 
-@app.post("/games/{game_id}/reviews", response_model=ReviewPublic)
+@app.post("/games/{game_id}/reviews", response_model='ReviewPublic')
 def create_review(game_id: str, req: ReviewCreateRequest):
     # check game exists
     try:
@@ -295,7 +336,7 @@ class CouponPublic(BaseModel):
     expires_at: Optional[str] = None
 
 
-def map_coupon(doc) -> CouponPublic:
+def map_coupon(doc) -> 'CouponPublic':
     return CouponPublic(
         id=str(doc["_id"]),
         code=doc.get("code"),
@@ -305,13 +346,13 @@ def map_coupon(doc) -> CouponPublic:
     )
 
 
-@app.get("/admin/coupons", response_model=List[CouponPublic])
+@app.get("/admin/coupons", response_model=List['CouponPublic'])
 def admin_list_coupons(user=Depends(require_admin)):
     docs = db["coupon"].find({}).sort("created_at", -1)
     return [map_coupon(d) for d in docs]
 
 
-@app.post("/admin/coupons", response_model=CouponPublic)
+@app.post("/admin/coupons", response_model='CouponPublic')
 def admin_create_coupon(req: CouponCreateRequest, user=Depends(require_admin)):
     existing = db["coupon"].find_one({"code": req.code})
     if existing:
@@ -328,7 +369,7 @@ class CouponUpdateRequest(BaseModel):
     expires_at: Optional[str] = None
 
 
-@app.put("/admin/coupons/{coupon_id}", response_model=CouponPublic)
+@app.put("/admin/coupons/{coupon_id}", response_model='CouponPublic')
 def admin_update_coupon(coupon_id: str, req: CouponUpdateRequest, user=Depends(require_admin)):
     try:
         oid = ObjectId(coupon_id)
@@ -411,7 +452,7 @@ class OrderPublic(BaseModel):
     total_price: Optional[float] = None
 
 
-def map_order(doc) -> OrderPublic:
+def map_order(doc) -> 'OrderPublic':
     return OrderPublic(
         id=str(doc["_id"]),
         game_id=str(doc.get("game_id")),
@@ -425,7 +466,7 @@ def map_order(doc) -> OrderPublic:
     )
 
 
-@app.post("/orders", response_model=OrderPublic)
+@app.post("/orders", response_model='OrderPublic')
 def create_order(req: OrderCreateRequest):
     # validate game exists
     try:
@@ -463,7 +504,7 @@ def create_order(req: OrderCreateRequest):
 
 # ------------ Admin: Games CRUD ------------ #
 
-@app.post("/admin/games", response_model=GamePublic)
+@app.post("/admin/games", response_model='GamePublic')
 def admin_create_game(req: GameCreateRequest, user=Depends(require_admin)):
     game_doc = GameSchema(
         title=req.title,
@@ -493,7 +534,7 @@ class GameUpdateRequest(BaseModel):
     featured: Optional[bool] = None
 
 
-@app.put("/admin/games/{game_id}", response_model=GamePublic)
+@app.put("/admin/games/{game_id}", response_model='GamePublic')
 def admin_update_game(game_id: str, req: GameUpdateRequest, user=Depends(require_admin)):
     try:
         oid = ObjectId(game_id)
@@ -523,7 +564,7 @@ def admin_delete_game(game_id: str, user=Depends(require_admin)):
 
 # ------------ Admin: Orders Management ------------ #
 
-@app.get("/admin/orders", response_model=List[OrderPublic])
+@app.get("/admin/orders", response_model=List['OrderPublic'])
 def admin_list_orders(user=Depends(require_admin)):
     docs = db["order"].find({}).sort("created_at", -1)
     return [map_order(d) for d in docs]
@@ -534,7 +575,7 @@ class OrderUpdateRequest(BaseModel):
     note: Optional[str] = None
 
 
-@app.put("/admin/orders/{order_id}", response_model=OrderPublic)
+@app.put("/admin/orders/{order_id}", response_model='OrderPublic')
 def admin_update_order(order_id: str, req: OrderUpdateRequest, user=Depends(require_admin)):
     try:
         oid = ObjectId(order_id)
